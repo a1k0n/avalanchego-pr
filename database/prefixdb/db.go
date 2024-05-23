@@ -17,6 +17,8 @@ var (
 	_ database.Database = (*Database)(nil)
 	_ database.Batch    = (*batch)(nil)
 	_ database.Iterator = (*iterator)(nil)
+
+	bufferPool = utils.NewBytesPool()
 )
 
 // Database partitions a database into a sub-database by prefixing all keys with
@@ -25,8 +27,7 @@ type Database struct {
 	// All keys in this db begin with this byte slice
 	dbPrefix []byte
 	// Lexically one greater than dbPrefix, defining the end of this db's key range
-	dbLimit    []byte
-	bufferPool *utils.BytesPool
+	dbLimit []byte
 
 	// lock needs to be held during Close to guarantee db will not be set to nil
 	// concurrently with another operation. All other operations can hold RLock.
@@ -38,10 +39,9 @@ type Database struct {
 
 func newDB(prefix []byte, db database.Database) *Database {
 	return &Database{
-		dbPrefix:   prefix,
-		dbLimit:    incrementByteSlice(prefix),
-		db:         db,
-		bufferPool: utils.NewBytesPool(),
+		dbPrefix: prefix,
+		dbLimit:  incrementByteSlice(prefix),
+		db:       db,
 	}
 }
 
@@ -107,7 +107,7 @@ func (db *Database) Has(key []byte) (bool, error) {
 		return false, database.ErrClosed
 	}
 	prefixedKey := db.prefix(key)
-	defer db.bufferPool.Put(prefixedKey)
+	defer bufferPool.Put(prefixedKey)
 
 	return db.db.Has(*prefixedKey)
 }
@@ -120,7 +120,7 @@ func (db *Database) Get(key []byte) ([]byte, error) {
 		return nil, database.ErrClosed
 	}
 	prefixedKey := db.prefix(key)
-	defer db.bufferPool.Put(prefixedKey)
+	defer bufferPool.Put(prefixedKey)
 
 	return db.db.Get(*prefixedKey)
 }
@@ -133,7 +133,7 @@ func (db *Database) Put(key, value []byte) error {
 		return database.ErrClosed
 	}
 	prefixedKey := db.prefix(key)
-	defer db.bufferPool.Put(prefixedKey)
+	defer bufferPool.Put(prefixedKey)
 
 	return db.db.Put(*prefixedKey, value)
 }
@@ -146,7 +146,7 @@ func (db *Database) Delete(key []byte) error {
 		return database.ErrClosed
 	}
 	prefixedKey := db.prefix(key)
-	defer db.bufferPool.Put(prefixedKey)
+	defer bufferPool.Put(prefixedKey)
 
 	return db.db.Delete(*prefixedKey)
 }
@@ -183,10 +183,10 @@ func (db *Database) NewIteratorWithStartAndPrefix(start, prefix []byte) database
 	}
 
 	prefixedStart := db.prefix(start)
-	defer db.bufferPool.Put(prefixedStart)
+	defer bufferPool.Put(prefixedStart)
 
 	prefixedPrefix := db.prefix(prefix)
-	defer db.bufferPool.Put(prefixedPrefix)
+	defer bufferPool.Put(prefixedPrefix)
 
 	return &iterator{
 		Iterator: db.db.NewIteratorWithStartAndPrefix(*prefixedStart, *prefixedPrefix),
@@ -203,13 +203,13 @@ func (db *Database) Compact(start, limit []byte) error {
 	}
 
 	prefixedStart := db.prefix(start)
-	defer db.bufferPool.Put(prefixedStart)
+	defer bufferPool.Put(prefixedStart)
 
 	if limit == nil {
 		return db.db.Compact(*prefixedStart, db.dbLimit)
 	}
 	prefixedLimit := db.prefix(limit)
-	defer db.bufferPool.Put(prefixedLimit)
+	defer bufferPool.Put(prefixedLimit)
 
 	return db.db.Compact(*prefixedStart, *prefixedLimit)
 }
@@ -246,7 +246,7 @@ func (db *Database) HealthCheck(ctx context.Context) (interface{}, error) {
 // The returned slice should be put back in the pool when it's done being used.
 func (db *Database) prefix(key []byte) *[]byte {
 	keyLen := len(db.dbPrefix) + len(key)
-	prefixedKey := db.bufferPool.Get(keyLen)
+	prefixedKey := bufferPool.Get(keyLen)
 	copy(*prefixedKey, db.dbPrefix)
 	copy((*prefixedKey)[len(db.dbPrefix):], key)
 	return prefixedKey
@@ -306,7 +306,7 @@ func (b *batch) Reset() {
 	// because we assume in batch.Replay that it's not safe to modify the
 	// value argument to w.Put.
 	for _, op := range b.ops {
-		b.db.bufferPool.Put(op.Key)
+		bufferPool.Put(op.Key)
 	}
 
 	// Clear b.writes

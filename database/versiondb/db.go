@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"github.com/ava-labs/avalanchego/database"
-	"github.com/ava-labs/avalanchego/database/memdb"
 )
 
 var (
@@ -45,7 +44,7 @@ type valueDelete struct {
 // New returns a new versioned database
 func New(db database.Database) *Database {
 	return &Database{
-		mem:   make(map[string]valueDelete, memdb.DefaultSize),
+		mem:   make(map[string]valueDelete),
 		db:    db,
 		batch: db.NewBatch(),
 	}
