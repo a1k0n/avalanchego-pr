@@ -520,12 +520,9 @@ func (vm *VM) parsePostForkBlock(ctx context.Context, b []byte) (PostForkBlock, 
 
 	// if the block already exists, then make sure the status is set correctly
 	blkID := statelessBlock.ID()
-	blk, err := vm.getPostForkBlock(ctx, blkID)
-	if err == nil {
+	blk, exists := vm.verifiedBlocks[blkID]
+	if exists {
 		return blk, nil
-	}
-	if err != database.ErrNotFound {
-		return nil, err
 	}
 
 	innerBlkBytes := statelessBlock.Block()
